@@ -1,0 +1,26 @@
+{
+  "name": "hinge-windows",
+  "productName": "Hinge (for Windows)",
+  "version": "1.0.0",
+  "description": "Give your Windows desktop a little bend. Close your lid and watch your screen softly fold and blur.",
+  "main": "src/main/index.js",
+  "scripts": {
+    "start": "electron .",
+    "test": "node tests/motion.test.js",
+    "check": "node tests/motion.test.js"
+  },
+  "keywords": [
+    "hinge",
+    "windows",
+    "desktop",
+    "motion",
+    "lid-sensor",
+    "screen-fold",
+    "fluent"
+  ],
+  "author": "Sanidhya",
+  "license": "MIT",
+  "devDependencies": {
+    "electron": "^34.0.0"
+  }
+}
