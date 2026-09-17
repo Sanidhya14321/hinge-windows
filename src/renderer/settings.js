@@ -54,6 +54,12 @@ lidAngleSlider.addEventListener('input', (e) => {
   ipcRenderer.send('set-virtual-angle', angle);
 });
 
+const toggleInvert = document.getElementById('toggle-invert');
+
+toggleInvert.addEventListener('change', (e) => {
+  ipcRenderer.send('toggle-invert', e.target.checked);
+});
+
 // IPC Incoming State
 ipcRenderer.on('state-update', (event, state) => {
   toggleActive.checked = state.isActive;
@@ -62,6 +68,7 @@ ipcRenderer.on('state-update', (event, state) => {
   openAngleDisplay.textContent = `${Math.round(state.openAngle)}°`;
   sensorTypeLabel.textContent = state.sensorType || 'Virtual Lid Sensor';
   currentAngleLabel.textContent = `${Math.round(state.currentAngle)}°`;
+  toggleInvert.checked = Boolean(state.inverted);
 
   if (!isUserDraggingSlider) {
     lidAngleSlider.value = state.currentAngle;

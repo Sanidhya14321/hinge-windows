@@ -40,10 +40,11 @@ let lidMotion = null;
 let isActive = false;
 let isStarting = false;
 let currentError = null;
-let motionLoopInterval = null;
 let overlayIsReady = false;
+let lastStateBroadcastTime = 0;
 
 function broadcastState(updateTray = false) {
+  const now = Date.now();
   const state = {
     isActive,
     isStarting,
@@ -51,11 +52,15 @@ function broadcastState(updateTray = false) {
     currentAngle: sensorManager ? sensorManager.currentAngle : 100,
     sensorType: sensorManager ? sensorManager.sensorType : 'Checking sensor…',
     hardwareAvailable: sensorManager ? sensorManager.hardwareAvailable : false,
+    inverted: lidMotion ? lidMotion.inverted : false,
     error: currentError
   };
 
-  if (settingsWindow && !settingsWindow.isDestroyed()) {
-    settingsWindow.webContents.send('state-update', state);
+  if (settingsWindow && !settingsWindow.isDestroyed() && settingsWindow.isVisible()) {
+    if (updateTray || now - lastStateBroadcastTime > 80) {
+      settingsWindow.webContents.send('state-update', state);
+      lastStateBroadcastTime = now;
+    }
   }
   if (updateTray) {
     updateTrayMenu();
@@ -148,7 +153,9 @@ async function sendCaptureSourceToOverlay() {
 
     if (overlayWindow && !overlayWindow.isDestroyed()) {
       overlayWindow.webContents.send('init-capture', {
-        sourceId: primarySource.id
+        sourceId: primarySource.id,
+        openAngle: lidMotion ? lidMotion.openAngle : 100,
+        inverted: lidMotion ? lidMotion.inverted : false
       });
     }
   } catch (err) {
@@ -170,7 +177,6 @@ async function startCapture() {
     }
 
     lidMotion.setEnabled(true);
-    startMotionLoop();
 
     isActive = true;
     isStarting = false;
@@ -188,33 +194,11 @@ function stopCapture() {
   isActive = false;
   isStarting = false;
   lidMotion.setEnabled(false);
-  stopMotionLoop();
 
   if (overlayWindow && !overlayWindow.isDestroyed()) {
     overlayWindow.webContents.send('stop-capture');
   }
   broadcastState(true);
-}
-
-function startMotionLoop() {
-  if (motionLoopInterval) return;
-
-  // 60 Hz motion update dispatch to overlay renderer
-  motionLoopInterval = setInterval(() => {
-    if (!isActive) return;
-    const progress = lidMotion.sample();
-
-    if (overlayWindow && !overlayWindow.isDestroyed()) {
-      overlayWindow.webContents.send('update-motion', { progress });
-    }
-  }, 16);
-}
-
-function stopMotionLoop() {
-  if (motionLoopInterval) {
-    clearInterval(motionLoopInterval);
-    motionLoopInterval = null;
-  }
 }
 
 function updateTrayMenu() {
@@ -283,6 +267,9 @@ function calibrateOpenPosition() {
     config.openAngle = angle;
     saveConfig(config);
     currentError = null;
+    if (overlayWindow && !overlayWindow.isDestroyed()) {
+      overlayWindow.webContents.send('update-config', { openAngle: angle });
+    }
   } else {
     currentError = 'Open lid to your comfortable viewing position first.';
   }
@@ -335,11 +322,17 @@ app.whenReady().then(async () => {
 
   // Initialize Motion with saved open angle
   lidMotion = new LidMotion(config.openAngle || 100);
+  if (config.inverted !== undefined) {
+    lidMotion.setInverted(Boolean(config.inverted));
+  }
 
   // Initialize Sensor Manager
   sensorManager = new SensorManager();
   sensorManager.on('angle', (angle) => {
     lidMotion.receive(angle);
+    if (overlayWindow && !overlayWindow.isDestroyed() && isActive) {
+      overlayWindow.webContents.send('sensor-angle', { angle });
+    }
     // Broadcast state without rebuilding tray every frame
     broadcastState(false);
   });
@@ -349,6 +342,9 @@ app.whenReady().then(async () => {
       lidMotion.setBaseline(info.angle);
       config.openAngle = info.angle;
       saveConfig(config);
+      if (overlayWindow && !overlayWindow.isDestroyed()) {
+        overlayWindow.webContents.send('update-config', { openAngle: info.angle });
+      }
     }
     broadcastState(true);
   });
@@ -385,6 +381,18 @@ ipcMain.on('toggle-active', (event, enabled) => {
     startCapture();
   } else {
     stopCapture();
+  }
+});
+
+ipcMain.on('toggle-invert', (event, inverted) => {
+  if (lidMotion) {
+    lidMotion.setInverted(inverted);
+    config.inverted = inverted;
+    saveConfig(config);
+    if (overlayWindow && !overlayWindow.isDestroyed()) {
+      overlayWindow.webContents.send('update-config', { inverted });
+    }
+    broadcastState(false);
   }
 });
 

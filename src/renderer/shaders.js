@@ -16,19 +16,19 @@ const Shaders = {
     }
   `,
 
-  // Standard UV quad vertex shader for FBO blur passes (consistent with quadVertex)
+  // Standard UV quad vertex shader for FBO blur passes (aligned with OpenGL framebuffer row 0)
   fboVertex: `#version 300 es
     in vec2 aPosition;
     out vec2 vUv;
     void main() {
-      vUv = vec2((aPosition.x + 1.0) * 0.5, (1.0 - aPosition.y) * 0.5);
+      vUv = vec2((aPosition.x + 1.0) * 0.5, (aPosition.y + 1.0) * 0.5);
       gl_Position = vec4(aPosition, 0.0, 1.0);
     }
   `,
 
-  // Separable Gaussian blur fragment shader
+  // High-performance 5-tap linear-sampled Gaussian blur fragment shader
   gaussianBlurFragment: `#version 300 es
-    precision highp float;
+    precision mediump float;
     in vec2 vUv;
     out vec4 fragColor;
 
@@ -37,20 +37,13 @@ const Shaders = {
     uniform float uRadius;
 
     void main() {
-      vec4 color = vec4(0.0);
-      float totalWeight = 0.0;
-      float radius = max(uRadius, 1.0);
-
-      // 9-tap optimized Gaussian sampling
-      for (float i = -4.0; i <= 4.0; i += 1.0) {
-        float offset = i * (radius / 4.0);
-        float weight = exp(-0.5 * (offset * offset) / (radius * radius * 0.35 + 0.001));
-        vec2 sampleUv = clamp(vUv + uDirection * offset, 0.0, 1.0);
-        color += texture(uTexture, sampleUv) * weight;
-        totalWeight += weight;
-      }
-
-      fragColor = color / totalWeight;
+      vec2 offset = uDirection * (uRadius * 0.45);
+      vec4 color = texture(uTexture, vUv) * 0.227027;
+      color += texture(uTexture, vUv + offset * 1.384615) * 0.316216;
+      color += texture(uTexture, vUv - offset * 1.384615) * 0.316216;
+      color += texture(uTexture, vUv + offset * 3.230769) * 0.070270;
+      color += texture(uTexture, vUv - offset * 3.230769) * 0.070270;
+      fragColor = color;
     }
   `,
 

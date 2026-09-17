@@ -1,32 +1,36 @@
 try {
     Add-Type -AssemblyName System.Runtime.WindowsRuntime
+    $null = [Windows.Devices.Sensors.Accelerometer, Windows.Devices.Sensors, ContentType = WindowsRuntime]
     $null = [Windows.Devices.Sensors.Inclinometer, Windows.Devices.Sensors, ContentType = WindowsRuntime]
-    $null = [Windows.Devices.Sensors.HingeAngleSensor, Windows.Devices.Sensors, ContentType = WindowsRuntime]
 
-    # 1. Check for physical Inclinometer (common on convertible laptops like HP x360, Lenovo Yoga, etc.)
-    $inc = [Windows.Devices.Sensors.Inclinometer]::GetDefault()
-    if ($null -ne $inc) {
-        $reading = $inc.GetCurrentReading()
-        if ($null -ne $reading) {
+    # 1. Accelerometer (Calculates true 0° closed to 180° flat angle)
+    $acc = [Windows.Devices.Sensors.Accelerometer]::GetDefault()
+    if ($null -ne $acc) {
+        $a = $acc.GetCurrentReading()
+        if ($null -ne $a) {
+            $rad = [Math]::Atan2(-$a.AccelerationZ, -$a.AccelerationY)
+            $deg = [Math]::Round($rad * (180.0 / [Math]::PI) + 90.0, 1)
+            $deg = [Math]::Max(0.0, [Math]::Min(180.0, $deg))
+
             Write-Output "HARDWARE_SENSOR_FOUND"
-            Write-Output "TYPE:Inclinometer"
-            Write-Output "ANGLE:$([Math]::Round($reading.PitchDegrees, 1))"
+            Write-Output "TYPE:Accelerometer"
+            Write-Output "ANGLE:$deg"
             exit 0
         }
     }
 
-    # 2. Check for HingeAngleSensor
-    $asyncOp = [Windows.Devices.Sensors.HingeAngleSensor]::GetDefaultAsync()
-    $asTaskMethod = [System.WindowsRuntimeSystemExtensions].GetMethods() | Where-Object {
-        $_.Name -eq 'AsTask' -and $_.GetParameters().Length -eq 1 -and $_.GetParameters()[0].ParameterType.Name -eq 'IAsyncOperation`1'
-    }
-    $task = $asTaskMethod.MakeGenericMethod([Windows.Devices.Sensors.HingeAngleSensor]).Invoke($null, @($asyncOp))
-    $task.Wait(1500) | Out-Null
-    $sensor = $task.Result
-    if ($null -ne $sensor) {
-        Write-Output "HARDWARE_SENSOR_FOUND"
-        Write-Output "TYPE:HingeAngleSensor"
-        exit 0
+    # 2. Inclinometer fallback
+    $inc = [Windows.Devices.Sensors.Inclinometer]::GetDefault()
+    if ($null -ne $inc) {
+        $reading = $inc.GetCurrentReading()
+        if ($null -ne $reading) {
+            $deg = [Math]::Round(180.0 - [Math]::Abs($reading.PitchDegrees), 1)
+            $deg = [Math]::Max(0.0, [Math]::Min(180.0, $deg))
+            Write-Output "HARDWARE_SENSOR_FOUND"
+            Write-Output "TYPE:Inclinometer"
+            Write-Output "ANGLE:$deg"
+            exit 0
+        }
     }
 
     Write-Output "NO_HARDWARE_SENSOR"

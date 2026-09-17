@@ -19,10 +19,17 @@ class LidMotion {
     this.displayVelocity = 0.0;
     this.lastFrame = 0.0;
     this.lastSample = 0.0;
+    this.inverted = false;
   }
 
   now() {
     return performance.now() / 1000.0;
+  }
+
+  setInverted(val) {
+    this.inverted = Boolean(val);
+    this.reset();
+    this.updateTarget();
   }
 
   receive(value, time = this.now()) {
@@ -33,10 +40,18 @@ class LidMotion {
     if (value !== null && this.trackedAngle !== null && this.lastSample > 0 && time >= this.lastSample) {
       const delta = Math.max(time - this.lastSample, 0.001);
       const nextAngle = Math.min(Math.max(this.trackedAngle, value - 0.6), value + 0.6);
-      if (nextAngle < this.trackedAngle) {
-        this.direction = 1; // closing
-      } else if (nextAngle > this.trackedAngle) {
-        this.direction = -1; // opening
+      if (this.inverted) {
+        if (nextAngle > this.trackedAngle) {
+          this.direction = 1; // closing
+        } else if (nextAngle < this.trackedAngle) {
+          this.direction = -1; // opening
+        }
+      } else {
+        if (nextAngle < this.trackedAngle) {
+          this.direction = 1; // closing
+        } else if (nextAngle > this.trackedAngle) {
+          this.direction = -1; // opening
+        }
       }
       const measuredVelocity = (nextAngle - this.trackedAngle) / delta;
       this.angularVelocity += (measuredVelocity - this.angularVelocity) * (1 - Math.exp(-delta / 0.06));
@@ -91,7 +106,7 @@ class LidMotion {
   }
 
   updateTarget(time = this.now()) {
-    if (!this.enabled || this.baseline <= 8 || this.angle === null || this.trackedAngle === null || this.angle >= this.baseline) {
+    if (!this.enabled || this.baseline <= 8 || this.angle === null || this.trackedAngle === null) {
       this.target = 0.0;
       if (this.enabled) {
         this.direction = -1;
@@ -99,8 +114,31 @@ class LidMotion {
       return;
     }
 
-    const prediction = Math.min(Math.max(this.velocity(time) * 0.035, -0.75), 0.75);
-    this.target = Math.min(Math.max((this.baseline - 0.6 - this.trackedAngle - prediction) / (this.baseline - 8.6), 0), 1);
+    const current = this.trackedAngle;
+    const base = this.baseline;
+
+    if (this.inverted) {
+      // Inverted: Opening towards 180 degrees should NOT animate.
+      // Closing towards 0 degrees triggers the fold.
+      if (current >= base) {
+        this.target = 0.0;
+        this.direction = -1;
+        return;
+      }
+      const prediction = Math.min(Math.max(this.velocity(time) * 0.035, -0.75), 0.75);
+      this.target = Math.min(Math.max((base - 0.6 - current - prediction) / (base - 8.6), 0), 1);
+    } else {
+      // Standard: Angle decreases when closing (e.g. 100° down towards 10°)
+      // If angle >= baseline (e.g. 100° to 180°), screen is open -> target = 0.0
+      if (current >= base) {
+        this.target = 0.0;
+        this.direction = -1;
+        return;
+      }
+
+      const prediction = Math.min(Math.max(this.velocity(time) * 0.035, -0.75), 0.75);
+      this.target = Math.min(Math.max((base - 0.6 - current - prediction) / (base - 8.6), 0), 1);
+    }
   }
 
   sample(time = this.now()) {

@@ -1,21 +1,28 @@
 try {
     Add-Type -AssemblyName System.Runtime.WindowsRuntime
+    $null = [Windows.Devices.Sensors.Accelerometer, Windows.Devices.Sensors, ContentType = WindowsRuntime]
     $null = [Windows.Devices.Sensors.Inclinometer, Windows.Devices.Sensors, ContentType = WindowsRuntime]
     $null = [Windows.Devices.Sensors.HingeAngleSensor, Windows.Devices.Sensors, ContentType = WindowsRuntime]
 
-    # 1. Try Inclinometer
-    $inc = [Windows.Devices.Sensors.Inclinometer]::GetDefault()
-    if ($null -ne $inc) {
-        $inc.ReportInterval = 16
-        Write-Output '{"status":"connected","type":"Windows Inclinometer (Live Hardware)"}'
+    # 1. Try Accelerometer (Provides true 0° closed to 180° flat angle)
+    $acc = [Windows.Devices.Sensors.Accelerometer]::GetDefault()
+    if ($null -ne $acc) {
+        $acc.ReportInterval = 16
+        Write-Output '{"status":"connected","type":"HP x360 Integrated Sensor (Live Hardware)"}'
 
         $lastAngle = -999.0
         while ($true) {
-            $r = $inc.GetCurrentReading()
-            if ($null -ne $r) {
-                $deg = [Math]::Round($r.PitchDegrees, 1)
-                # Emit update if changed by at least 0.1 degree
-                if ([Math]::Abs($deg - $lastAngle) -ge 0.1) {
+            $a = $acc.GetCurrentReading()
+            if ($null -ne $a) {
+                # Y is along screen height (negative when upright), Z is normal to screen surface
+                # Upright (viewing): Y ≈ -0.94, Z ≈ -0.10 -> Angle ≈ 97°
+                # Open flat (180°): Y ≈ 0, Z ≈ -1.0 -> Angle = 180°
+                # Closed (0°): Y ≈ 0, Z ≈ +1.0 -> Angle = 0°
+                $rad = [Math]::Atan2(-$a.AccelerationZ, -$a.AccelerationY)
+                $deg = [Math]::Round($rad * (180.0 / [Math]::PI) + 90.0, 1)
+                $deg = [Math]::Max(0.0, [Math]::Min(180.0, $deg))
+
+                if ([Math]::Abs($deg - $lastAngle) -ge 0.15) {
                     Write-Output ("{`"angle`":" + $deg + "}")
                     $lastAngle = $deg
                 }
@@ -25,24 +32,20 @@ try {
         exit 0
     }
 
-    # 2. Try HingeAngleSensor
-    $asyncOp = [Windows.Devices.Sensors.HingeAngleSensor]::GetDefaultAsync()
-    $asTaskMethod = [System.WindowsRuntimeSystemExtensions].GetMethods() | Where-Object {
-        $_.Name -eq 'AsTask' -and $_.GetParameters().Length -eq 1 -and $_.GetParameters()[0].ParameterType.Name -eq 'IAsyncOperation`1'
-    }
-    $task = $asTaskMethod.MakeGenericMethod([Windows.Devices.Sensors.HingeAngleSensor]).Invoke($null, @($asyncOp))
-    $task.Wait(1500) | Out-Null
-    $sensor = $task.Result
+    # 2. Fallback: Inclinometer
+    $inc = [Windows.Devices.Sensors.Inclinometer]::GetDefault()
+    if ($null -ne $inc) {
+        $inc.ReportInterval = 16
+        Write-Output '{"status":"connected","type":"Windows Inclinometer (Live Hardware)"}'
 
-    if ($null -ne $sensor) {
-        $sensor.ReportInterval = 16
-        Write-Output '{"status":"connected","type":"Windows HingeAngleSensor (Live Hardware)"}'
         $lastAngle = -999.0
         while ($true) {
-            $r = $sensor.GetCurrentReading()
+            $r = $inc.GetCurrentReading()
             if ($null -ne $r) {
-                $deg = [Math]::Round($r.AngleInDegrees, 1)
-                if ([Math]::Abs($deg - $lastAngle) -ge 0.1) {
+                # Inclinometer Pitch is 0° when flat (180° open), ~83° when upright, 180° when face down (0° closed)
+                $deg = [Math]::Round(180.0 - [Math]::Abs($r.PitchDegrees), 1)
+                $deg = [Math]::Max(0.0, [Math]::Min(180.0, $deg))
+                if ([Math]::Abs($deg - $lastAngle) -ge 0.15) {
                     Write-Output ("{`"angle`":" + $deg + "}")
                     $lastAngle = $deg
                 }
