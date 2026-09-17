@@ -114,7 +114,7 @@ function createOverlayWindow() {
   }
 
   const primaryDisplay = screen.getPrimaryDisplay();
-  const { x, y, width, height } = primaryDisplay.bounds;
+  const { x, y, width, height } = primaryDisplay.workArea;
 
   overlayWindow = new BrowserWindow({
     x,
@@ -149,6 +149,11 @@ function createOverlayWindow() {
 
 async function sendCaptureSourceToOverlay() {
   try {
+    const primaryDisplay = screen.getPrimaryDisplay();
+    const workAreaScaleY = primaryDisplay.bounds.height > 0
+      ? primaryDisplay.workArea.height / primaryDisplay.bounds.height
+      : 1.0;
+
     const sources = await desktopCapturer.getSources({ types: ['screen'], thumbnailSize: { width: 0, height: 0 } });
     const primarySource = sources.find(s => s.id.startsWith('screen:') || s.name === 'Entire screen') || sources[0];
 
@@ -156,14 +161,16 @@ async function sendCaptureSourceToOverlay() {
       overlayWindow.webContents.send('init-capture', {
         sourceId: primarySource ? primarySource.id : null,
         openAngle: lidMotion ? lidMotion.openAngle : 100,
-        inverted: lidMotion ? lidMotion.inverted : false
+        inverted: lidMotion ? lidMotion.inverted : false,
+        workAreaScaleY
       });
     }
   } catch (err) {
     if (overlayWindow && !overlayWindow.isDestroyed()) {
       overlayWindow.webContents.send('init-capture', {
         openAngle: lidMotion ? lidMotion.openAngle : 100,
-        inverted: lidMotion ? lidMotion.inverted : false
+        inverted: lidMotion ? lidMotion.inverted : false,
+        workAreaScaleY: 1.0
       });
     }
   }
@@ -331,7 +338,11 @@ app.whenReady().then(async () => {
   screen.on('display-metrics-changed', () => {
     if (overlayWindow && !overlayWindow.isDestroyed()) {
       const primaryDisplay = screen.getPrimaryDisplay();
-      overlayWindow.setBounds(primaryDisplay.bounds);
+      overlayWindow.setBounds(primaryDisplay.workArea);
+      const workAreaScaleY = primaryDisplay.bounds.height > 0
+        ? primaryDisplay.workArea.height / primaryDisplay.bounds.height
+        : 1.0;
+      overlayWindow.webContents.send('update-config', { workAreaScaleY });
     }
   });
 
@@ -343,6 +354,9 @@ app.whenReady().then(async () => {
 
   // Initialize Sensor Manager
   let firstReadingReceived = false;
+  let lastOverlayAngle = -999;
+  let lastOverlayTime = 0;
+
   sensorManager = new SensorManager();
   sensorManager.on('angle', (angle) => {
     if (!firstReadingReceived && !config.hasUserCalibrated && angle >= 50 && angle <= 150) {
@@ -355,8 +369,15 @@ app.whenReady().then(async () => {
       }
     }
     lidMotion.receive(angle);
+
+    const now = Date.now();
     if (overlayWindow && !overlayWindow.isDestroyed() && isActive) {
-      overlayWindow.webContents.send('sensor-angle', { angle });
+      // Throttle overlay IPC to 60fps (16ms) or significant change to prevent renderer queue lag
+      if (now - lastOverlayTime >= 15 || Math.abs(angle - lastOverlayAngle) >= 0.2) {
+        overlayWindow.webContents.send('sensor-angle', { angle });
+        lastOverlayAngle = angle;
+        lastOverlayTime = now;
+      }
     }
     // Broadcast state without rebuilding tray every frame
     broadcastState(false);

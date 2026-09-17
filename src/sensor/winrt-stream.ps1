@@ -29,7 +29,7 @@ try {
                     $lastAngle = $deg
                 }
             }
-            [System.Threading.Thread]::Sleep(12)
+            [System.Threading.Thread]::Sleep(16)
         }
         exit 0
     }

@@ -60,6 +60,7 @@ const Shaders = {
 
     uniform float uProgress;
     uniform float uOpacity;
+    uniform float uWorkAreaScaleY; // Excludes taskbar at bottom of captured screen
 
     void main() {
       // Perspective projection: homogeneous horizontal taper
@@ -67,11 +68,15 @@ const Shaders = {
       float q = (1.0 + 0.30 * uProgress) / (1.0 + 0.30 * uProgress * vUv.y);
       vec2 uv = vec2((vUv.x - 0.5) * q + 0.5, vUv.y * q);
 
+      // Scale Y coordinate to sample only the workspace, excluding taskbar
+      float scaleY = uWorkAreaScaleY > 0.0 ? uWorkAreaScaleY : 1.0;
+      vec2 texUv = vec2(uv.x, uv.y * scaleY);
+
       float edge = min(uv.x, 1.0 - uv.x);
 
       // Outside the projected screen edge: extend with broad blur
       if (edge <= 0.0) {
-        vec3 broadColor = texture(uBroad, clamp(uv, 0.0, 1.0)).rgb;
+        vec3 broadColor = texture(uBroad, clamp(texUv, 0.0, 1.0)).rgb;
         fragColor = vec4(broadColor * uOpacity, uOpacity);
         return;
       }
@@ -80,10 +85,10 @@ const Shaders = {
       float amount = 36.0 * uProgress * (1.0 - smoothstep(0.0, 0.9, uv.y));
       vec3 color;
 
-      vec3 srcCol = texture(uSource, uv).rgb;
-      vec3 softCol = texture(uSoft, uv).rgb;
-      vec3 medCol = texture(uMedium, uv).rgb;
-      vec3 broadCol = texture(uBroad, uv).rgb;
+      vec3 srcCol = texture(uSource, texUv).rgb;
+      vec3 softCol = texture(uSoft, texUv).rgb;
+      vec3 medCol = texture(uMedium, texUv).rgb;
+      vec3 broadCol = texture(uBroad, texUv).rgb;
 
       if (amount < 6.0) {
         color = mix(srcCol, softCol, amount / 6.0);

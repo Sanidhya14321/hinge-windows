@@ -40,6 +40,9 @@ const quadVertices = new Float32Array([
 ]);
 
 let hasCapturedLiveFrame = false;
+let workAreaScaleY = 1.0;
+let foldUniforms = null;
+let blurUniforms = null;
 
 function initGL() {
   if (gl) return true;
@@ -59,6 +62,23 @@ function initGL() {
 
   foldProgram = Shaders.createProgram(gl, Shaders.quadVertex, Shaders.foldFragment);
   blurProgram = Shaders.createProgram(gl, Shaders.fboVertex, Shaders.gaussianBlurFragment);
+
+  // Pre-cache uniform locations (avoids per-frame GPU driver queries & stutters)
+  foldUniforms = {
+    uSource: gl.getUniformLocation(foldProgram, 'uSource'),
+    uSoft: gl.getUniformLocation(foldProgram, 'uSoft'),
+    uMedium: gl.getUniformLocation(foldProgram, 'uMedium'),
+    uBroad: gl.getUniformLocation(foldProgram, 'uBroad'),
+    uProgress: gl.getUniformLocation(foldProgram, 'uProgress'),
+    uOpacity: gl.getUniformLocation(foldProgram, 'uOpacity'),
+    uWorkAreaScaleY: gl.getUniformLocation(foldProgram, 'uWorkAreaScaleY')
+  };
+
+  blurUniforms = {
+    uTexture: gl.getUniformLocation(blurProgram, 'uTexture'),
+    uDirection: gl.getUniformLocation(blurProgram, 'uDirection'),
+    uRadius: gl.getUniformLocation(blurProgram, 'uRadius')
+  };
 
   // Quad VAO for fold rendering
   quadVao = gl.createVertexArray();
@@ -111,8 +131,9 @@ function createTexture(width, height) {
 }
 
 function allocateTextures() {
-  screenWidth = window.innerWidth;
-  screenHeight = window.innerHeight;
+  const dpr = window.devicePixelRatio || 1;
+  screenWidth = Math.round(window.innerWidth * dpr);
+  screenHeight = Math.round(window.innerHeight * dpr);
   canvas.width = screenWidth;
   canvas.height = screenHeight;
 
@@ -151,24 +172,20 @@ function applyBlurPass(sourceTex, targetTex, radius, width, height) {
   gl.useProgram(blurProgram);
   gl.bindVertexArray(fboVao);
 
-  const uTexture = gl.getUniformLocation(blurProgram, 'uTexture');
-  const uDirection = gl.getUniformLocation(blurProgram, 'uDirection');
-  const uRadius = gl.getUniformLocation(blurProgram, 'uRadius');
-
   // Pass 1: Horizontal into tempBlurTexture
   gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tempBlurTexture, 0);
   gl.activeTexture(gl.TEXTURE0);
   gl.bindTexture(gl.TEXTURE_2D, sourceTex);
-  gl.uniform1i(uTexture, 0);
-  gl.uniform2f(uDirection, 1.0 / width, 0.0);
-  gl.uniform1f(uRadius, radius);
+  gl.uniform1i(blurUniforms.uTexture, 0);
+  gl.uniform2f(blurUniforms.uDirection, 1.0 / width, 0.0);
+  gl.uniform1f(blurUniforms.uRadius, radius);
   gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
 
   // Pass 2: Vertical into targetTex
   gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, targetTex, 0);
   gl.bindTexture(gl.TEXTURE_2D, tempBlurTexture);
-  gl.uniform2f(uDirection, 0.0, 1.0 / height);
-  gl.uniform1f(uRadius, radius);
+  gl.uniform2f(blurUniforms.uDirection, 0.0, 1.0 / height);
+  gl.uniform1f(blurUniforms.uRadius, radius);
   gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
 
   gl.bindFramebuffer(gl.FRAMEBUFFER, null);
@@ -183,9 +200,9 @@ function downsampleSource(width, height) {
   gl.bindVertexArray(fboVao);
   gl.activeTexture(gl.TEXTURE0);
   gl.bindTexture(gl.TEXTURE_2D, sourceTexture);
-  gl.uniform1i(gl.getUniformLocation(blurProgram, 'uTexture'), 0);
-  gl.uniform2f(gl.getUniformLocation(blurProgram, 'uDirection'), 0.0, 0.0);
-  gl.uniform1f(gl.getUniformLocation(blurProgram, 'uRadius'), 0.0);
+  gl.uniform1i(blurUniforms.uTexture, 0);
+  gl.uniform2f(blurUniforms.uDirection, 0.0, 0.0);
+  gl.uniform1f(blurUniforms.uRadius, 0.0);
   gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
 
   gl.bindFramebuffer(gl.FRAMEBUFFER, null);
@@ -316,22 +333,23 @@ function renderFold(timestamp) {
   // Bind pre-cached GPU textures of the open desktop (zero upload overhead during motion)
   gl.activeTexture(gl.TEXTURE0);
   gl.bindTexture(gl.TEXTURE_2D, sourceTexture);
-  gl.uniform1i(gl.getUniformLocation(foldProgram, 'uSource'), 0);
+  gl.uniform1i(foldUniforms.uSource, 0);
 
   gl.activeTexture(gl.TEXTURE1);
   gl.bindTexture(gl.TEXTURE_2D, softTexture);
-  gl.uniform1i(gl.getUniformLocation(foldProgram, 'uSoft'), 1);
+  gl.uniform1i(foldUniforms.uSoft, 1);
 
   gl.activeTexture(gl.TEXTURE2);
   gl.bindTexture(gl.TEXTURE_2D, mediumTexture);
-  gl.uniform1i(gl.getUniformLocation(foldProgram, 'uMedium'), 2);
+  gl.uniform1i(foldUniforms.uMedium, 2);
 
   gl.activeTexture(gl.TEXTURE3);
   gl.bindTexture(gl.TEXTURE_2D, broadTexture);
-  gl.uniform1i(gl.getUniformLocation(foldProgram, 'uBroad'), 3);
+  gl.uniform1i(foldUniforms.uBroad, 3);
 
-  gl.uniform1f(gl.getUniformLocation(foldProgram, 'uProgress'), progress);
-  gl.uniform1f(gl.getUniformLocation(foldProgram, 'uOpacity'), opacity);
+  gl.uniform1f(foldUniforms.uProgress, progress);
+  gl.uniform1f(foldUniforms.uOpacity, opacity);
+  gl.uniform1f(foldUniforms.uWorkAreaScaleY, workAreaScaleY);
 
   // Single fast GPU draw call (~0.05ms)
   gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
@@ -374,8 +392,11 @@ window.addEventListener('DOMContentLoaded', () => {
 });
 
 // IPC Listeners
-ipcRenderer.on('init-capture', (event, { sourceId, openAngle, inverted }) => {
+ipcRenderer.on('init-capture', (event, { sourceId, openAngle, inverted, workAreaScaleY: scaleY }) => {
   initGL();
+  if (typeof scaleY === 'number' && scaleY > 0) {
+    workAreaScaleY = scaleY;
+  }
   if (typeof openAngle === 'number') {
     lidMotion.setBaseline(openAngle);
   }
@@ -395,8 +416,11 @@ ipcRenderer.on('sensor-angle', (event, { angle }) => {
   }
 });
 
-ipcRenderer.on('update-config', (event, { openAngle, inverted }) => {
+ipcRenderer.on('update-config', (event, { openAngle, inverted, workAreaScaleY: scaleY }) => {
   if (!lidMotion) return;
+  if (typeof scaleY === 'number' && scaleY > 0) {
+    workAreaScaleY = scaleY;
+  }
   if (typeof openAngle === 'number') {
     lidMotion.setBaseline(openAngle);
   }
