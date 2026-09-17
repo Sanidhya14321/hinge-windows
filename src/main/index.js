@@ -143,12 +143,25 @@ function createOverlayWindow() {
   overlayWindow.loadFile(path.join(__dirname, '../renderer/overlay.html'));
 }
 
-function sendCaptureSourceToOverlay() {
-  if (overlayWindow && !overlayWindow.isDestroyed()) {
-    overlayWindow.webContents.send('init-capture', {
-      openAngle: lidMotion ? lidMotion.openAngle : 100,
-      inverted: lidMotion ? lidMotion.inverted : false
-    });
+async function sendCaptureSourceToOverlay() {
+  try {
+    const sources = await desktopCapturer.getSources({ types: ['screen'], thumbnailSize: { width: 0, height: 0 } });
+    const primarySource = sources.find(s => s.id.startsWith('screen:') || s.name === 'Entire screen') || sources[0];
+
+    if (overlayWindow && !overlayWindow.isDestroyed()) {
+      overlayWindow.webContents.send('init-capture', {
+        sourceId: primarySource ? primarySource.id : null,
+        openAngle: lidMotion ? lidMotion.openAngle : 100,
+        inverted: lidMotion ? lidMotion.inverted : false
+      });
+    }
+  } catch (err) {
+    if (overlayWindow && !overlayWindow.isDestroyed()) {
+      overlayWindow.webContents.send('init-capture', {
+        openAngle: lidMotion ? lidMotion.openAngle : 100,
+        inverted: lidMotion ? lidMotion.inverted : false
+      });
+    }
   }
 }
 
@@ -162,7 +175,7 @@ async function startCapture() {
     createOverlayWindow();
 
     if (overlayIsReady) {
-      sendCaptureSourceToOverlay();
+      await sendCaptureSourceToOverlay();
     }
 
     lidMotion.setEnabled(true);

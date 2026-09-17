@@ -4,6 +4,9 @@ const path = require('path');
 const { LidMotion } = require('../motion/LidMotion');
 
 const canvas = document.getElementById('gl-canvas');
+let video = null;
+let captureStream = null;
+let captureInterval = null;
 
 let gl = null;
 let foldProgram = null;
@@ -81,9 +84,8 @@ function initGL() {
 
   if (!loadSystemWallpaper()) {
     initDefaultPattern();
-    updateBlurPyramid();
   }
-
+  updateBlurPyramid();
   clearCanvas();
 
   return true;
@@ -126,7 +128,7 @@ function allocateTextures() {
   tempBlurTexture = createTexture(smallW, smallH);
 }
 
-// Load the authentic, native Windows desktop wallpaper with zero CPU/WebRTC overhead
+// Fallback wallpaper image if live screen capture is initializing
 function loadSystemWallpaper() {
   try {
     const wallpaperPath = path.join(process.env.APPDATA || '', 'Microsoft/Windows/Themes/TranscodedWallpaper');
@@ -138,14 +140,13 @@ function loadSystemWallpaper() {
           gl.bindTexture(gl.TEXTURE_2D, sourceTexture);
           gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, img);
           updateBlurPyramid();
+          clearCanvas();
         }
       };
       img.src = 'file:///' + wallpaperPath.replace(/\\/g, '/');
       return true;
     }
-  } catch (e) {
-    console.warn('Wallpaper load note:', e);
-  }
+  } catch (e) {}
   return false;
 }
 
@@ -225,6 +226,79 @@ function updateBlurPyramid() {
   applyBlurPass(smallTexture, broadTexture, 36.0 * scale, smallW, smallH);
 }
 
+// Live screen frame capture (captures the open windows in background when lid is open)
+async function startLiveCapture(sourceId) {
+  if (!video) {
+    video = document.getElementById('capture-video');
+  }
+  if (!sourceId || !video) {
+    loadSystemWallpaper();
+    ipcRenderer.send('overlay-ready');
+    return;
+  }
+
+  try {
+    captureStream = await navigator.mediaDevices.getUserMedia({
+      audio: false,
+      video: {
+        mandatory: {
+          chromeMediaSource: 'desktop',
+          chromeMediaSourceId: sourceId,
+          maxFrameRate: 30
+        }
+      }
+    });
+
+    video.srcObject = captureStream;
+    video.onloadedmetadata = () => {
+      video.play().then(() => {
+        setTimeout(captureLiveFrame, 150);
+        ipcRenderer.send('overlay-ready');
+      }).catch(() => {
+        loadSystemWallpaper();
+        ipcRenderer.send('overlay-ready');
+      });
+    };
+
+    // Periodically update the live screen snapshot while resting
+    if (!captureInterval) {
+      captureInterval = setInterval(captureLiveFrame, 600);
+    }
+  } catch (err) {
+    console.warn('Live screen capture fallback:', err.message);
+    loadSystemWallpaper();
+    ipcRenderer.send('overlay-ready');
+  }
+}
+
+function captureLiveFrame() {
+  if (!video || video.readyState < video.HAVE_CURRENT_DATA) return;
+  // CRITICAL: NEVER update texture while lid is folding (eliminates 100% of lag & feedback loops)
+  if (lidMotion && (lidMotion.isClosing || lidMotion.displayed > 0.001)) return;
+
+  if (gl && sourceTexture) {
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, sourceTexture);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, video);
+    updateBlurPyramid();
+    clearCanvas();
+  }
+}
+
+function stopLiveCapture() {
+  if (captureInterval) {
+    clearInterval(captureInterval);
+    captureInterval = null;
+  }
+  if (captureStream) {
+    captureStream.getTracks().forEach(track => track.stop());
+    captureStream = null;
+  }
+  if (video) {
+    video.srcObject = null;
+  }
+}
+
 // Silky 60+ FPS hardware VSync-locked render loop
 function renderFold(timestamp) {
   if (!gl || !lidMotion) return;
@@ -233,7 +307,7 @@ function renderFold(timestamp) {
   const progress = lidMotion.sample(time);
 
   if (progress <= 0.0001 && !lidMotion.isClosing) {
-    // Lid is open at rest: clear canvas and hide overlay so Windows desktop apps are active underneath
+    // Lid is open at rest: clear canvas and hide overlay so active open windows are fully interactive
     if (isOverlayDrawn) {
       clearCanvas();
       isOverlayDrawn = false;
@@ -263,7 +337,7 @@ function renderFold(timestamp) {
   gl.useProgram(foldProgram);
   gl.bindVertexArray(quadVao);
 
-  // Bind pre-cached GPU textures (zero upload overhead during motion)
+  // Bind pre-cached GPU textures of the open desktop (zero upload overhead during motion)
   gl.activeTexture(gl.TEXTURE0);
   gl.bindTexture(gl.TEXTURE_2D, sourceTexture);
   gl.uniform1i(gl.getUniformLocation(foldProgram, 'uSource'), 0);
@@ -296,22 +370,14 @@ function wakeRenderLoop() {
   }
 }
 
-function startOverlay() {
-  isCapturing = true;
-  loadSystemWallpaper();
-  ipcRenderer.send('overlay-ready');
-}
-
 function stopOverlay() {
   isCapturing = false;
+  stopLiveCapture();
   if (animationFrameId) {
     cancelAnimationFrame(animationFrameId);
     animationFrameId = null;
   }
-  if (gl) {
-    gl.clearColor(0, 0, 0, 0);
-    gl.clear(gl.COLOR_BUFFER_BIT);
-  }
+  clearCanvas();
   isOverlayDrawn = false;
 }
 
@@ -322,6 +388,7 @@ window.addEventListener('resize', () => {
       initDefaultPattern();
     }
     updateBlurPyramid();
+    clearCanvas();
   }
 });
 
@@ -332,7 +399,7 @@ window.addEventListener('DOMContentLoaded', () => {
 });
 
 // IPC Listeners
-ipcRenderer.on('init-capture', (event, { openAngle, inverted }) => {
+ipcRenderer.on('init-capture', (event, { sourceId, openAngle, inverted }) => {
   initGL();
   if (typeof openAngle === 'number') {
     lidMotion.setBaseline(openAngle);
@@ -341,7 +408,8 @@ ipcRenderer.on('init-capture', (event, { openAngle, inverted }) => {
     lidMotion.setInverted(inverted);
   }
   lidMotion.setEnabled(true);
-  startOverlay();
+  isCapturing = true;
+  startLiveCapture(sourceId);
 });
 
 ipcRenderer.on('sensor-angle', (event, { angle }) => {
