@@ -8,10 +8,11 @@
     "start": "electron .",
     "test": "node tests/motion.test.js",
     "check": "node tests/motion.test.js",
-    "pack": "electron-builder --dir",
-    "dist": "electron-builder --win"
+    "pack": "electron-builder --dir --publish never",
+    "dist": "electron-builder --win --publish never"
   },
   "build": {
+    "publish": null,
     "appId": "com.sanidhya.hinge",
     "productName": "Hinge (for Windows)",
     "artifactName": "Hinge-Windows-Setup-${version}.${ext}",

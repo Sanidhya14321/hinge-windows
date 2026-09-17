@@ -33,7 +33,9 @@ jobs:
         run: npm ci
 
       - name: Build one-click installer and portable exe
-        run: npm run dist
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: npm run dist -- --publish never
 
       - name: Compute SHA-256 checksums
         shell: pwsh
