@@ -290,8 +290,12 @@ async function startCapture(sourceId) {
         mandatory: {
           chromeMediaSource: 'desktop',
           chromeMediaSourceId: sourceId,
-          maxFrameRate: 60
-        }
+          maxFrameRate: 15
+        },
+        optional: [
+          { googCursor: false },
+          { cursor: 'never' }
+        ]
       }
     });
 
