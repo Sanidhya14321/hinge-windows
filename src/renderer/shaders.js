@@ -16,12 +16,12 @@ const Shaders = {
     }
   `,
 
-  // Standard UV quad vertex shader for FBO blur passes (aligned with OpenGL framebuffer row 0)
+  // Standard UV quad vertex shader for FBO blur passes (strictly aligned with quadVertex)
   fboVertex: `#version 300 es
     in vec2 aPosition;
     out vec2 vUv;
     void main() {
-      vUv = vec2((aPosition.x + 1.0) * 0.5, (aPosition.y + 1.0) * 0.5);
+      vUv = vec2((aPosition.x + 1.0) * 0.5, (1.0 - aPosition.y) * 0.5);
       gl_Position = vec4(aPosition, 0.0, 1.0);
     }
   `,

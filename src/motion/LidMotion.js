@@ -154,18 +154,25 @@ class LidMotion {
     const delta = this.lastFrame > 0 && elapsed < 0.1 ? Math.min(Math.max(elapsed, 0.001), 0.033) : 1.0 / 60.0;
     this.lastFrame = time;
 
-    // Critically damped spring integration:
-    // frequency responds to velocity between 30 and 55 rad/s
     const frequency = 30 + Math.min(Math.abs(this.velocity(time)) * 0.55, 25);
     const offset = this.displayed - this.target;
     const travel = (this.displayVelocity + frequency * offset) * delta;
     const decay = Math.exp(-frequency * delta);
-
+    const previous = this.displayed;
     this.displayed = this.target + (offset + travel) * decay;
     this.displayVelocity = (this.displayVelocity - frequency * travel) * decay;
 
-    // Settle cleanly to target when close
-    if (Math.abs(this.displayed - this.target) < 0.0005 && Math.abs(this.displayVelocity) < 0.001) {
+    // Monotonic clamping: if closing, displayed cannot decrease; if opening, displayed cannot increase
+    if ((this.direction > 0 && this.displayed < previous) || (this.direction < 0 && this.displayed > previous)) {
+      this.displayed = previous;
+      this.displayVelocity = 0.0;
+    }
+
+    // Settling condition matching macOS Hinge
+    const canSettle =
+      this.direction === 0 || (this.direction > 0 && this.target >= this.displayed)
+      || (this.direction < 0 && this.target <= this.displayed);
+    if (canSettle && Math.abs(this.displayed - this.target) < 0.0001 && Math.abs(this.displayVelocity) < 0.0001) {
       this.displayed = this.target;
       this.displayVelocity = 0.0;
     }

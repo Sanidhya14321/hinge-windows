@@ -39,6 +39,8 @@ const quadVertices = new Float32Array([
    1.0,  1.0
 ]);
 
+let hasCapturedLiveFrame = false;
+
 function initGL() {
   if (gl) return true;
 
@@ -82,9 +84,7 @@ function initGL() {
   fbo = gl.createFramebuffer();
   allocateTextures();
 
-  if (!loadSystemWallpaper()) {
-    initDefaultPattern();
-  }
+  initDefaultPattern();
   updateBlurPyramid();
   clearCanvas();
 
@@ -126,28 +126,6 @@ function allocateTextures() {
   mediumTexture = createTexture(smallW, smallH);
   broadTexture = createTexture(smallW, smallH);
   tempBlurTexture = createTexture(smallW, smallH);
-}
-
-// Fallback wallpaper image if live screen capture is initializing
-function loadSystemWallpaper() {
-  try {
-    const wallpaperPath = path.join(process.env.APPDATA || '', 'Microsoft/Windows/Themes/TranscodedWallpaper');
-    if (fs.existsSync(wallpaperPath)) {
-      const img = new Image();
-      img.onload = () => {
-        if (gl && sourceTexture) {
-          gl.activeTexture(gl.TEXTURE0);
-          gl.bindTexture(gl.TEXTURE_2D, sourceTexture);
-          gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, img);
-          updateBlurPyramid();
-          clearCanvas();
-        }
-      };
-      img.src = 'file:///' + wallpaperPath.replace(/\\/g, '/');
-      return true;
-    }
-  } catch (e) {}
-  return false;
 }
 
 function initDefaultPattern() {
@@ -232,7 +210,6 @@ async function startLiveCapture(sourceId) {
     video = document.getElementById('capture-video');
   }
   if (!sourceId || !video) {
-    loadSystemWallpaper();
     ipcRenderer.send('overlay-ready');
     return;
   }
@@ -252,21 +229,20 @@ async function startLiveCapture(sourceId) {
     video.srcObject = captureStream;
     video.onloadedmetadata = () => {
       video.play().then(() => {
-        setTimeout(captureLiveFrame, 150);
+        captureLiveFrame();
         ipcRenderer.send('overlay-ready');
-      }).catch(() => {
-        loadSystemWallpaper();
+      }).catch((err) => {
+        console.warn('Video play error:', err);
         ipcRenderer.send('overlay-ready');
       });
     };
 
-    // Periodically update the live screen snapshot while resting
+    // Periodically update the live screen snapshot while resting (captures open windows)
     if (!captureInterval) {
-      captureInterval = setInterval(captureLiveFrame, 600);
+      captureInterval = setInterval(captureLiveFrame, 500);
     }
   } catch (err) {
-    console.warn('Live screen capture fallback:', err.message);
-    loadSystemWallpaper();
+    console.warn('Live screen capture error:', err.message);
     ipcRenderer.send('overlay-ready');
   }
 }
@@ -282,6 +258,7 @@ function captureLiveFrame() {
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, video);
     updateBlurPyramid();
     clearCanvas();
+    hasCapturedLiveFrame = true;
   }
 }
 
@@ -307,22 +284,21 @@ function renderFold(timestamp) {
   const progress = lidMotion.sample(time);
 
   if (progress <= 0.0001 && !lidMotion.isClosing) {
-    // Lid is open at rest: clear canvas and hide overlay so active open windows are fully interactive
+    // Lid is open at rest: clear canvas so active open windows are fully visible and interactive
     if (isOverlayDrawn) {
       clearCanvas();
       isOverlayDrawn = false;
-      ipcRenderer.send('hide-overlay');
     }
-    if (animationFrameId) {
-      cancelAnimationFrame(animationFrameId);
-      animationFrameId = null;
-    }
+    // Keep VSync loop primed for instantaneous 0ms response when lid moves
+    animationFrameId = requestAnimationFrame(renderFold);
     return;
   }
 
-  if (!isOverlayDrawn) {
-    ipcRenderer.send('show-overlay');
+  // If lid is closing and we haven't captured a live frame yet, try grabbing now
+  if (!hasCapturedLiveFrame) {
+    captureLiveFrame();
   }
+
   isOverlayDrawn = true;
 
   // Smooth cubic opacity blend for first 2.5% of closure
@@ -384,17 +360,16 @@ function stopOverlay() {
 window.addEventListener('resize', () => {
   if (gl) {
     allocateTextures();
-    if (!loadSystemWallpaper()) {
-      initDefaultPattern();
-    }
+    initDefaultPattern();
     updateBlurPyramid();
     clearCanvas();
   }
 });
 
-// DOM loaded: initialize GL and signal ready to main process
+// DOM loaded: initialize GL, start render loop, and signal ready to main process
 window.addEventListener('DOMContentLoaded', () => {
   initGL();
+  wakeRenderLoop();
   ipcRenderer.send('overlay-dom-ready');
 });
 

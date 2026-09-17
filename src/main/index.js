@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Tray, Menu, ipcMain, desktopCapturer, screen, powerMonitor, globalShortcut } = require('electron');
+const { app, BrowserWindow, Tray, Menu, ipcMain, desktopCapturer, screen, powerMonitor, globalShortcut, session } = require('electron');
 const path = require('path');
 const fs = require('fs');
 
@@ -141,6 +141,10 @@ function createOverlayWindow() {
   overlayWindow.setAlwaysOnTop(true);
 
   overlayWindow.loadFile(path.join(__dirname, '../renderer/overlay.html'));
+
+  overlayWindow.once('ready-to-show', () => {
+    overlayWindow.showInactive();
+  });
 }
 
 async function sendCaptureSourceToOverlay() {
@@ -301,6 +305,15 @@ function setupGlobalShortcuts() {
 
 // App Lifecycle
 app.whenReady().then(async () => {
+  session.defaultSession.setDisplayMediaRequestHandler(async (request, callback) => {
+    try {
+      const sources = await desktopCapturer.getSources({ types: ['screen'] });
+      callback({ video: sources[0] });
+    } catch (e) {
+      callback({});
+    }
+  });
+
   // Power and Display monitoring
   powerMonitor.on('suspend', () => {
     if (isActive) {
@@ -445,18 +458,6 @@ ipcMain.on('overlay-ready', () => {
 ipcMain.on('overlay-error', (event, message) => {
   currentError = message;
   broadcastState(false);
-});
-
-ipcMain.on('show-overlay', () => {
-  if (overlayWindow && !overlayWindow.isDestroyed() && !overlayWindow.isVisible()) {
-    overlayWindow.showInactive();
-  }
-});
-
-ipcMain.on('hide-overlay', () => {
-  if (overlayWindow && !overlayWindow.isDestroyed() && overlayWindow.isVisible()) {
-    overlayWindow.hide();
-  }
 });
 
 app.on('second-instance', () => {

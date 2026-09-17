@@ -28,13 +28,20 @@
       background: transparent;
     }
     #capture-video {
-      display: none;
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 4px;
+      height: 4px;
+      opacity: 0.001;
+      pointer-events: none;
+      z-index: -100;
     }
   </style>
 </head>
 <body>
   <canvas id="gl-canvas"></canvas>
-  <video id="capture-video" style="display:none;" autoplay playsinline muted></video>
+  <video id="capture-video" autoplay playsinline muted></video>
   <script src="shaders.js"></script>
   <script src="overlay.js"></script>
 </body>
