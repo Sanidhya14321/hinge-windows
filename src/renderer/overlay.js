@@ -1,4 +1,6 @@
 const { ipcRenderer } = require('electron');
+const fs = require('fs');
+const path = require('path');
 const { LidMotion } = require('../motion/LidMotion');
 
 const canvas = document.getElementById('gl-canvas');
@@ -82,10 +84,31 @@ function initGL() {
   fbo = gl.createFramebuffer();
   allocateTextures();
 
-  initDefaultPattern();
+  if (!loadSystemWallpaper()) {
+    initDefaultPattern();
+  }
   updateBlurPyramid();
 
   return true;
+}
+
+function loadSystemWallpaper() {
+  try {
+    const wallpaperPath = path.join(process.env.APPDATA || '', 'Microsoft/Windows/Themes/TranscodedWallpaper');
+    if (fs.existsSync(wallpaperPath)) {
+      const img = new Image();
+      img.onload = () => {
+        if (gl && sourceTexture) {
+          gl.bindTexture(gl.TEXTURE_2D, sourceTexture);
+          gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, img);
+          updateBlurPyramid();
+        }
+      };
+      img.src = 'file:///' + wallpaperPath.replace(/\\/g, '/');
+      return true;
+    }
+  } catch (e) {}
+  return false;
 }
 
 function createTexture(width, height) {
@@ -316,13 +339,21 @@ async function startCapture(sourceId) {
       }
     });
 
+    const track = captureStream.getVideoTracks()[0];
+    if (track) {
+      track.onended = () => {
+        loadSystemWallpaper();
+      };
+    }
+
     video.srcObject = captureStream;
     video.onloadedmetadata = async () => {
       try {
         refreshSnapshot();
         ipcRenderer.send('overlay-ready');
       } catch (e) {
-        console.warn('Video play note:', e);
+        loadSystemWallpaper();
+        ipcRenderer.send('overlay-ready');
       }
     };
 
@@ -331,7 +362,7 @@ async function startCapture(sourceId) {
       backgroundCaptureInterval = setInterval(refreshSnapshot, 4000);
     }
   } catch (err) {
-    console.warn('Live screen capture note (using fallback pattern):', err.message);
+    loadSystemWallpaper();
     ipcRenderer.send('overlay-ready');
   }
 }
