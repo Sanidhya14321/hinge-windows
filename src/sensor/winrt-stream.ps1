@@ -8,7 +8,8 @@ try {
     $acc = [Windows.Devices.Sensors.Accelerometer]::GetDefault()
     if ($null -ne $acc) {
         $acc.ReportInterval = 16
-        Write-Output '{"status":"connected","type":"HP x360 Integrated Sensor (Live Hardware)"}'
+        [Console]::Out.WriteLine('{"status":"connected","type":"HP x360 Integrated Sensor (Live Hardware)"}')
+        [Console]::Out.Flush()
 
         $lastAngle = -999.0
         while ($true) {
@@ -22,12 +23,13 @@ try {
                 $deg = [Math]::Round($rad * (180.0 / [Math]::PI) + 90.0, 1)
                 $deg = [Math]::Max(0.0, [Math]::Min(180.0, $deg))
 
-                if ([Math]::Abs($deg - $lastAngle) -ge 0.15) {
-                    Write-Output ("{`"angle`":" + $deg + "}")
+                if ([Math]::Abs($deg - $lastAngle) -ge 0.1) {
+                    [Console]::Out.WriteLine('{"angle":' + $deg + '}')
+                    [Console]::Out.Flush()
                     $lastAngle = $deg
                 }
             }
-            Start-Sleep -Milliseconds 16
+            [System.Threading.Thread]::Sleep(12)
         }
         exit 0
     }
@@ -36,7 +38,8 @@ try {
     $inc = [Windows.Devices.Sensors.Inclinometer]::GetDefault()
     if ($null -ne $inc) {
         $inc.ReportInterval = 16
-        Write-Output '{"status":"connected","type":"Windows Inclinometer (Live Hardware)"}'
+        [Console]::Out.WriteLine('{"status":"connected","type":"Windows Inclinometer (Live Hardware)"}')
+        [Console]::Out.Flush()
 
         $lastAngle = -999.0
         while ($true) {
@@ -45,12 +48,13 @@ try {
                 # Inclinometer Pitch is 0° when flat (180° open), ~83° when upright, 180° when face down (0° closed)
                 $deg = [Math]::Round(180.0 - [Math]::Abs($r.PitchDegrees), 1)
                 $deg = [Math]::Max(0.0, [Math]::Min(180.0, $deg))
-                if ([Math]::Abs($deg - $lastAngle) -ge 0.15) {
-                    Write-Output ("{`"angle`":" + $deg + "}")
+                if ([Math]::Abs($deg - $lastAngle) -ge 0.1) {
+                    [Console]::Out.WriteLine('{"angle":' + $deg + '}')
+                    [Console]::Out.Flush()
                     $lastAngle = $deg
                 }
             }
-            Start-Sleep -Milliseconds 16
+            [System.Threading.Thread]::Sleep(12)
         }
         exit 0
     }

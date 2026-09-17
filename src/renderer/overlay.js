@@ -4,7 +4,6 @@ const path = require('path');
 const { LidMotion } = require('../motion/LidMotion');
 
 const canvas = document.getElementById('gl-canvas');
-const video = document.getElementById('capture-video');
 
 let gl = null;
 let foldProgram = null;
@@ -22,16 +21,12 @@ let tempBlurTexture = null;
 let fbo = null;
 let isCapturing = false;
 let animationFrameId = null;
-let backgroundCaptureInterval = null;
 let screenWidth = window.innerWidth;
 let screenHeight = window.innerHeight;
-
-let lastCaptureTime = 0;
-let lastVideoCurrentTime = -1;
 let isOverlayDrawn = false;
 
-// LidMotion physics simulation inside renderer (VSync-locked)
-let lidMotion = new LidMotion(100);
+// Hardware display-synchronized LidMotion physics filter
+const lidMotion = new LidMotion(100);
 
 // Fullscreen quad [-1, 1]
 const quadVertices = new Float32Array([
@@ -60,7 +55,7 @@ function initGL() {
   foldProgram = Shaders.createProgram(gl, Shaders.quadVertex, Shaders.foldFragment);
   blurProgram = Shaders.createProgram(gl, Shaders.fboVertex, Shaders.gaussianBlurFragment);
 
-  // Setup Quad VAO
+  // Quad VAO for fold rendering
   quadVao = gl.createVertexArray();
   gl.bindVertexArray(quadVao);
   const quadBuffer = gl.createBuffer();
@@ -71,7 +66,7 @@ function initGL() {
   gl.enableVertexAttribArray(aPosFold);
   gl.vertexAttribPointer(aPosFold, 2, gl.FLOAT, false, 0, 0);
 
-  // Setup FBO Quad VAO
+  // FBO VAO for blur passes
   fboVao = gl.createVertexArray();
   gl.bindVertexArray(fboVao);
   gl.bindBuffer(gl.ARRAY_BUFFER, quadBuffer);
@@ -86,29 +81,10 @@ function initGL() {
 
   if (!loadSystemWallpaper()) {
     initDefaultPattern();
+    updateBlurPyramid();
   }
-  updateBlurPyramid();
 
   return true;
-}
-
-function loadSystemWallpaper() {
-  try {
-    const wallpaperPath = path.join(process.env.APPDATA || '', 'Microsoft/Windows/Themes/TranscodedWallpaper');
-    if (fs.existsSync(wallpaperPath)) {
-      const img = new Image();
-      img.onload = () => {
-        if (gl && sourceTexture) {
-          gl.bindTexture(gl.TEXTURE_2D, sourceTexture);
-          gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, img);
-          updateBlurPyramid();
-        }
-      };
-      img.src = 'file:///' + wallpaperPath.replace(/\\/g, '/');
-      return true;
-    }
-  } catch (e) {}
-  return false;
 }
 
 function createTexture(width, height) {
@@ -138,6 +114,29 @@ function allocateTextures() {
   mediumTexture = createTexture(smallW, smallH);
   broadTexture = createTexture(smallW, smallH);
   tempBlurTexture = createTexture(smallW, smallH);
+}
+
+// Load the authentic, native Windows desktop wallpaper with zero CPU/WebRTC overhead
+function loadSystemWallpaper() {
+  try {
+    const wallpaperPath = path.join(process.env.APPDATA || '', 'Microsoft/Windows/Themes/TranscodedWallpaper');
+    if (fs.existsSync(wallpaperPath)) {
+      const img = new Image();
+      img.onload = () => {
+        if (gl && sourceTexture) {
+          gl.activeTexture(gl.TEXTURE0);
+          gl.bindTexture(gl.TEXTURE_2D, sourceTexture);
+          gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, img);
+          updateBlurPyramid();
+        }
+      };
+      img.src = 'file:///' + wallpaperPath.replace(/\\/g, '/');
+      return true;
+    }
+  } catch (e) {
+    console.warn('Wallpaper load note:', e);
+  }
+  return false;
 }
 
 function initDefaultPattern() {
@@ -216,50 +215,15 @@ function updateBlurPyramid() {
   applyBlurPass(smallTexture, broadTexture, 36.0 * scale, smallW, smallH);
 }
 
-// Background desktop snapshot: ONLY updates when screen is completely open / resting
-// Puts WebRTC track to sleep between snapshots to eliminate 100% of cursor errors & CPU drain
-let captureStream = null;
-let isRefreshingSnapshot = false;
-
-function refreshSnapshot() {
-  if (!captureStream || !isCapturing || !gl || isRefreshingSnapshot) return;
-  if (lidMotion && (lidMotion.isClosing || lidMotion.displayed > 0.0)) return;
-
-  const track = captureStream.getVideoTracks()[0];
-  if (!track) return;
-
-  isRefreshingSnapshot = true;
-  track.enabled = true;
-
-  video.play().then(() => {
-    setTimeout(() => {
-      if (video.readyState >= video.HAVE_CURRENT_DATA && (!lidMotion || (!lidMotion.isClosing && lidMotion.displayed <= 0.0))) {
-        gl.activeTexture(gl.TEXTURE0);
-        gl.bindTexture(gl.TEXTURE_2D, sourceTexture);
-        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, video);
-        updateBlurPyramid();
-        lastCaptureTime = performance.now();
-      }
-      // Immediately disable track and pause video to sleep WebRTC frame grabber
-      if (track) track.enabled = false;
-      video.pause();
-      isRefreshingSnapshot = false;
-    }, 120);
-  }).catch(() => {
-    if (track) track.enabled = false;
-    isRefreshingSnapshot = false;
-  });
-}
-
-// Silky 60+ FPS VSync-locked render loop
+// Silky 60+ FPS hardware VSync-locked render loop
 function renderFold(timestamp) {
   if (!gl || !lidMotion) return;
 
   const time = (timestamp || performance.now()) / 1000.0;
   const progress = lidMotion.sample(time);
 
-  if (progress <= 0.0 && !lidMotion.isClosing) {
-    // Lid is fully open/resting: clear overlay to 0% opacity
+  if (progress <= 0.0001 && !lidMotion.isClosing) {
+    // Lid is open at rest: clear canvas to transparent so Windows desktop is active underneath
     if (isOverlayDrawn) {
       gl.viewport(0, 0, canvas.width, canvas.height);
       gl.clearColor(0.0, 0.0, 0.0, 0.0);
@@ -287,7 +251,7 @@ function renderFold(timestamp) {
   gl.useProgram(foldProgram);
   gl.bindVertexArray(quadVao);
 
-  // Bind pre-cached textures (zero upload overhead during fold)
+  // Bind pre-cached GPU textures (zero upload overhead during motion)
   gl.activeTexture(gl.TEXTURE0);
   gl.bindTexture(gl.TEXTURE_2D, sourceTexture);
   gl.uniform1i(gl.getUniformLocation(foldProgram, 'uSource'), 0);
@@ -310,7 +274,7 @@ function renderFold(timestamp) {
   // Single fast GPU draw call (~0.05ms)
   gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
 
-  // Keep RAF going while folding
+  // Keep RAF loop active while folding
   animationFrameId = requestAnimationFrame(renderFold);
 }
 
@@ -320,63 +284,13 @@ function wakeRenderLoop() {
   }
 }
 
-async function startCapture(sourceId) {
+function startOverlay() {
   isCapturing = true;
-
-  try {
-    captureStream = await navigator.mediaDevices.getUserMedia({
-      audio: false,
-      video: {
-        mandatory: {
-          chromeMediaSource: 'desktop',
-          chromeMediaSourceId: sourceId,
-          maxFrameRate: 15
-        },
-        optional: [
-          { googCursor: false },
-          { cursor: 'never' }
-        ]
-      }
-    });
-
-    const track = captureStream.getVideoTracks()[0];
-    if (track) {
-      track.onended = () => {
-        loadSystemWallpaper();
-      };
-    }
-
-    video.srcObject = captureStream;
-    video.onloadedmetadata = async () => {
-      try {
-        refreshSnapshot();
-        ipcRenderer.send('overlay-ready');
-      } catch (e) {
-        loadSystemWallpaper();
-        ipcRenderer.send('overlay-ready');
-      }
-    };
-
-    if (!backgroundCaptureInterval) {
-      // Relaxed 4-second cadence to refresh background snapshot while resting
-      backgroundCaptureInterval = setInterval(refreshSnapshot, 4000);
-    }
-  } catch (err) {
-    loadSystemWallpaper();
-    ipcRenderer.send('overlay-ready');
-  }
+  loadSystemWallpaper();
+  ipcRenderer.send('overlay-ready');
 }
 
-function stopCapture() {
-  if (backgroundCaptureInterval) {
-    clearInterval(backgroundCaptureInterval);
-    backgroundCaptureInterval = null;
-  }
-  if (captureStream) {
-    captureStream.getTracks().forEach(track => track.stop());
-    captureStream = null;
-  }
-  video.srcObject = null;
+function stopOverlay() {
   isCapturing = false;
   if (animationFrameId) {
     cancelAnimationFrame(animationFrameId);
@@ -392,7 +306,9 @@ function stopCapture() {
 window.addEventListener('resize', () => {
   if (gl) {
     allocateTextures();
-    initDefaultPattern();
+    if (!loadSystemWallpaper()) {
+      initDefaultPattern();
+    }
     updateBlurPyramid();
   }
 });
@@ -404,7 +320,7 @@ window.addEventListener('DOMContentLoaded', () => {
 });
 
 // IPC Listeners
-ipcRenderer.on('init-capture', (event, { sourceId, openAngle, inverted }) => {
+ipcRenderer.on('init-capture', (event, { openAngle, inverted }) => {
   initGL();
   if (typeof openAngle === 'number') {
     lidMotion.setBaseline(openAngle);
@@ -413,7 +329,7 @@ ipcRenderer.on('init-capture', (event, { sourceId, openAngle, inverted }) => {
     lidMotion.setInverted(inverted);
   }
   lidMotion.setEnabled(true);
-  startCapture(sourceId);
+  startOverlay();
 });
 
 ipcRenderer.on('sensor-angle', (event, { angle }) => {
@@ -438,5 +354,5 @@ ipcRenderer.on('stop-capture', () => {
   if (lidMotion) {
     lidMotion.setEnabled(false);
   }
-  stopCapture();
+  stopOverlay();
 });

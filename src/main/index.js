@@ -147,24 +147,12 @@ function createOverlayWindow() {
   });
 }
 
-async function sendCaptureSourceToOverlay() {
-  try {
-    const sources = await desktopCapturer.getSources({ types: ['screen'] });
-    const primarySource = sources.find(s => s.id.startsWith('screen:') || s.name === 'Entire screen') || sources[0];
-
-    if (!primarySource) {
-      throw new Error('No desktop screen found.');
-    }
-
-    if (overlayWindow && !overlayWindow.isDestroyed()) {
-      overlayWindow.webContents.send('init-capture', {
-        sourceId: primarySource.id,
-        openAngle: lidMotion ? lidMotion.openAngle : 100,
-        inverted: lidMotion ? lidMotion.inverted : false
-      });
-    }
-  } catch (err) {
-    console.error('Failed to get screen sources:', err.message);
+function sendCaptureSourceToOverlay() {
+  if (overlayWindow && !overlayWindow.isDestroyed()) {
+    overlayWindow.webContents.send('init-capture', {
+      openAngle: lidMotion ? lidMotion.openAngle : 100,
+      inverted: lidMotion ? lidMotion.inverted : false
+    });
   }
 }
 
@@ -178,7 +166,7 @@ async function startCapture() {
     createOverlayWindow();
 
     if (overlayIsReady) {
-      await sendCaptureSourceToOverlay();
+      sendCaptureSourceToOverlay();
     }
 
     lidMotion.setEnabled(true);
