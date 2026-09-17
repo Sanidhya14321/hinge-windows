@@ -6,12 +6,10 @@ class SensorManager extends EventEmitter {
   constructor() {
     super();
     this.hardwareAvailable = false;
-    this.sensorType = 'Virtual Lid Sensor';
-    this.isTracking = false;
+    this.sensorType = 'Checking sensor…';
     this.currentAngle = 100.0;
     this.streamProcess = null;
     this.demoInterval = null;
-    this.demoStep = 0;
   }
 
   async init() {
@@ -33,8 +31,20 @@ class SensorManager extends EventEmitter {
 
       if (stdout.includes('HARDWARE_SENSOR_FOUND')) {
         this.hardwareAvailable = true;
-        this.sensorType = 'Windows HingeAngleSensor (Hardware)';
-        this.emit('sensor-detected', { hardware: true, name: this.sensorType });
+        if (stdout.includes('TYPE:Inclinometer')) {
+          this.sensorType = 'Built-in Inclinometer (Live Hardware)';
+        } else if (stdout.includes('TYPE:HingeAngleSensor')) {
+          this.sensorType = 'Windows HingeAngleSensor (Live Hardware)';
+        } else {
+          this.sensorType = 'Lid Motion Sensor (Live Hardware)';
+        }
+
+        const match = stdout.match(/ANGLE:([0-9.]+)/);
+        if (match && match[1]) {
+          this.currentAngle = parseFloat(match[1]);
+        }
+
+        this.emit('sensor-detected', { hardware: true, name: this.sensorType, angle: this.currentAngle });
       } else {
         this.hardwareAvailable = false;
         this.sensorType = 'Virtual / Interactive Lid (Demo Mode)';
@@ -53,7 +63,6 @@ class SensorManager extends EventEmitter {
     if (this.hardwareAvailable) {
       this.startHardwareStream();
     } else {
-      // In virtual mode, emit steady current angle
       this.emit('angle', this.currentAngle);
     }
   }
@@ -78,12 +87,15 @@ class SensorManager extends EventEmitter {
         if (!trimmed) continue;
         try {
           const json = JSON.parse(trimmed);
+          if (json.type) {
+            this.sensorType = json.type;
+          }
           if (typeof json.angle === 'number') {
             this.currentAngle = json.angle;
             this.emit('angle', this.currentAngle);
           }
         } catch (err) {
-          // ignore non-json lines
+          // ignore non-json
         }
       }
     });

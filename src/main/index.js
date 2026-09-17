@@ -279,6 +279,7 @@ function updateTrayMenu() {
 function calibrateOpenPosition() {
   const angle = lidMotion.calibrate();
   if (angle !== null) {
+    config.hasUserCalibrated = true;
     config.openAngle = angle;
     saveConfig(config);
     currentError = null;
@@ -341,6 +342,15 @@ app.whenReady().then(async () => {
     lidMotion.receive(angle);
     // Broadcast state without rebuilding tray every frame
     broadcastState(false);
+  });
+
+  sensorManager.on('sensor-detected', (info) => {
+    if (info.hardware && !config.hasUserCalibrated && info.angle) {
+      lidMotion.setBaseline(info.angle);
+      config.openAngle = info.angle;
+      saveConfig(config);
+    }
+    broadcastState(true);
   });
 
   await sensorManager.init();
