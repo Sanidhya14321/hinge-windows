@@ -25,7 +25,21 @@ Hinge samples lid angle in real time and transforms it into a smooth, continuous
 - Windows 10 (Version 2004+) or Windows 11 (64-bit)
 - Node.js v18+ (tested on Node.js v24)
 
-## Getting Started
+## Download & One-Click Install
+
+### 1. One-Click Installer (Recommended)
+Download the latest **[Hinge-Windows-Setup.exe](../../releases/latest)**:
+- **Instant One-Click Setup**: Double-click the downloaded `.exe` to install. Zero configuration or wizard steps required.
+- **No Admin / UAC Prompts Required**: Installs directly into user local application data (`%LOCALAPPDATA%`).
+- **Instant Launch**: Automatically adds Desktop and Start Menu shortcuts and opens Hinge immediately.
+
+### 2. Portable Executable
+Download **[Hinge-Windows-Portable.exe](../../releases/latest)**:
+- Single standalone `.exe` with zero installation required. Run directly from your Downloads folder or USB drive.
+
+---
+
+## Getting Started (Developers)
 
 Clone the repository and run:
 
@@ -35,6 +49,15 @@ cd hinge-windows
 npm install
 npm start
 ```
+
+### Build Installer Executables
+
+To build the one-click NSIS setup `.exe` and portable `.exe`:
+
+```bash
+npm run dist
+```
+The output executables will be placed in the `dist/` directory.
 
 ## Running Tests
 

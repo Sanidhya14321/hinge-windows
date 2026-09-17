@@ -7,7 +7,51 @@
   "scripts": {
     "start": "electron .",
     "test": "node tests/motion.test.js",
-    "check": "node tests/motion.test.js"
+    "check": "node tests/motion.test.js",
+    "pack": "electron-builder --dir",
+    "dist": "electron-builder --win"
+  },
+  "build": {
+    "appId": "com.sanidhya.hinge",
+    "productName": "Hinge (for Windows)",
+    "artifactName": "Hinge-Windows-Setup-${version}.${ext}",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "src/**/*",
+      "package.json"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "src/assets/icon.ico"
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": false,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Hinge",
+      "uninstallDisplayName": "Hinge (for Windows)",
+      "runAfterFinish": true
+    },
+    "portable": {
+      "artifactName": "Hinge-Windows-Portable-${version}.${ext}"
+    }
   },
   "keywords": [
     "hinge",
@@ -21,6 +65,7 @@
   "author": "Sanidhya",
   "license": "MIT",
   "devDependencies": {
-    "electron": "^34.0.0"
+    "electron": "^34.0.0",
+    "electron-builder": "^26.15.3"
   }
 }
