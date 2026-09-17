@@ -1,6 +1,11 @@
 const { app, BrowserWindow, Tray, Menu, ipcMain, desktopCapturer, screen, powerMonitor, globalShortcut } = require('electron');
 const path = require('path');
 const fs = require('fs');
+
+// Suppress internal WebRTC / GDI desktop capture warning spam
+app.commandLine.appendSwitch('log-level', '3');
+app.commandLine.appendSwitch('disable-logging');
+
 const { LidMotion } = require('../motion/LidMotion');
 const { SensorManager } = require('../sensor/SensorManager');
 

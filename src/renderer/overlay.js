@@ -194,20 +194,38 @@ function updateBlurPyramid() {
 }
 
 // Background desktop snapshot: ONLY updates when screen is completely open / resting
-// Absolutely NEVER runs during fold animation (eliminates 100% of GPU freezes and feedback loops)
-function checkBackgroundCapture() {
-  if (!isCapturing || !gl || !video || video.readyState < video.HAVE_CURRENT_DATA) return;
-  if (lidMotion.isClosing || lidMotion.displayed > 0.0) return;
+// Puts WebRTC track to sleep between snapshots to eliminate 100% of cursor errors & CPU drain
+let captureStream = null;
+let isRefreshingSnapshot = false;
 
-  const now = performance.now();
-  if (now - lastCaptureTime > 400 && video.currentTime !== lastVideoCurrentTime) {
-    gl.activeTexture(gl.TEXTURE0);
-    gl.bindTexture(gl.TEXTURE_2D, sourceTexture);
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, video);
-    updateBlurPyramid();
-    lastVideoCurrentTime = video.currentTime;
-    lastCaptureTime = now;
-  }
+function refreshSnapshot() {
+  if (!captureStream || !isCapturing || !gl || isRefreshingSnapshot) return;
+  if (lidMotion && (lidMotion.isClosing || lidMotion.displayed > 0.0)) return;
+
+  const track = captureStream.getVideoTracks()[0];
+  if (!track) return;
+
+  isRefreshingSnapshot = true;
+  track.enabled = true;
+
+  video.play().then(() => {
+    setTimeout(() => {
+      if (video.readyState >= video.HAVE_CURRENT_DATA && (!lidMotion || (!lidMotion.isClosing && lidMotion.displayed <= 0.0))) {
+        gl.activeTexture(gl.TEXTURE0);
+        gl.bindTexture(gl.TEXTURE_2D, sourceTexture);
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, video);
+        updateBlurPyramid();
+        lastCaptureTime = performance.now();
+      }
+      // Immediately disable track and pause video to sleep WebRTC frame grabber
+      if (track) track.enabled = false;
+      video.pause();
+      isRefreshingSnapshot = false;
+    }, 120);
+  }).catch(() => {
+    if (track) track.enabled = false;
+    isRefreshingSnapshot = false;
+  });
 }
 
 // Silky 60+ FPS VSync-locked render loop
@@ -281,10 +299,9 @@ function wakeRenderLoop() {
 
 async function startCapture(sourceId) {
   isCapturing = true;
-  wakeRenderLoop();
 
   try {
-    const stream = await navigator.mediaDevices.getUserMedia({
+    captureStream = await navigator.mediaDevices.getUserMedia({
       audio: false,
       video: {
         mandatory: {
@@ -299,22 +316,19 @@ async function startCapture(sourceId) {
       }
     });
 
-    video.srcObject = stream;
+    video.srcObject = captureStream;
     video.onloadedmetadata = async () => {
       try {
-        await video.play();
-        // Capture first clean frame immediately
-        setTimeout(() => {
-          checkBackgroundCapture();
-          ipcRenderer.send('overlay-ready');
-        }, 100);
+        refreshSnapshot();
+        ipcRenderer.send('overlay-ready');
       } catch (e) {
         console.warn('Video play note:', e);
       }
     };
 
     if (!backgroundCaptureInterval) {
-      backgroundCaptureInterval = setInterval(checkBackgroundCapture, 300);
+      // Relaxed 4-second cadence to refresh background snapshot while resting
+      backgroundCaptureInterval = setInterval(refreshSnapshot, 4000);
     }
   } catch (err) {
     console.warn('Live screen capture note (using fallback pattern):', err.message);
@@ -327,11 +341,11 @@ function stopCapture() {
     clearInterval(backgroundCaptureInterval);
     backgroundCaptureInterval = null;
   }
-  if (video.srcObject) {
-    const tracks = video.srcObject.getTracks();
-    tracks.forEach(track => track.stop());
-    video.srcObject = null;
+  if (captureStream) {
+    captureStream.getTracks().forEach(track => track.stop());
+    captureStream = null;
   }
+  video.srcObject = null;
   isCapturing = false;
   if (animationFrameId) {
     cancelAnimationFrame(animationFrameId);
