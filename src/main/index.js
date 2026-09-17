@@ -138,13 +138,9 @@ function createOverlayWindow() {
 
   // Pure OS-level click-through on Windows (WS_EX_TRANSPARENT)
   overlayWindow.setIgnoreMouseEvents(true);
-  overlayWindow.setAlwaysOnTop(true, 'screen-saver');
+  overlayWindow.setAlwaysOnTop(true);
 
   overlayWindow.loadFile(path.join(__dirname, '../renderer/overlay.html'));
-
-  overlayWindow.once('ready-to-show', () => {
-    overlayWindow.showInactive();
-  });
 }
 
 function sendCaptureSourceToOverlay() {
@@ -320,8 +316,18 @@ app.whenReady().then(async () => {
   }
 
   // Initialize Sensor Manager
+  let firstReadingReceived = false;
   sensorManager = new SensorManager();
   sensorManager.on('angle', (angle) => {
+    if (!firstReadingReceived && !config.hasUserCalibrated && angle >= 50 && angle <= 150) {
+      firstReadingReceived = true;
+      lidMotion.setBaseline(angle);
+      config.openAngle = angle;
+      saveConfig(config);
+      if (overlayWindow && !overlayWindow.isDestroyed()) {
+        overlayWindow.webContents.send('update-config', { openAngle: angle });
+      }
+    }
     lidMotion.receive(angle);
     if (overlayWindow && !overlayWindow.isDestroyed() && isActive) {
       overlayWindow.webContents.send('sensor-angle', { angle });
@@ -331,7 +337,8 @@ app.whenReady().then(async () => {
   });
 
   sensorManager.on('sensor-detected', (info) => {
-    if (info.hardware && !config.hasUserCalibrated && info.angle) {
+    if (info.hardware && !config.hasUserCalibrated && info.angle && info.angle >= 50 && info.angle <= 150) {
+      firstReadingReceived = true;
       lidMotion.setBaseline(info.angle);
       config.openAngle = info.angle;
       saveConfig(config);
@@ -425,6 +432,18 @@ ipcMain.on('overlay-ready', () => {
 ipcMain.on('overlay-error', (event, message) => {
   currentError = message;
   broadcastState(false);
+});
+
+ipcMain.on('show-overlay', () => {
+  if (overlayWindow && !overlayWindow.isDestroyed() && !overlayWindow.isVisible()) {
+    overlayWindow.showInactive();
+  }
+});
+
+ipcMain.on('hide-overlay', () => {
+  if (overlayWindow && !overlayWindow.isDestroyed() && overlayWindow.isVisible()) {
+    overlayWindow.hide();
+  }
 });
 
 app.on('second-instance', () => {

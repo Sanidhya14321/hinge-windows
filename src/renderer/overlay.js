@@ -84,7 +84,17 @@ function initGL() {
     updateBlurPyramid();
   }
 
+  clearCanvas();
+
   return true;
+}
+
+function clearCanvas() {
+  if (!gl) return;
+  gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+  gl.viewport(0, 0, canvas.width, canvas.height);
+  gl.clearColor(0.0, 0.0, 0.0, 0.0);
+  gl.clear(gl.COLOR_BUFFER_BIT);
 }
 
 function createTexture(width, height) {
@@ -223,12 +233,11 @@ function renderFold(timestamp) {
   const progress = lidMotion.sample(time);
 
   if (progress <= 0.0001 && !lidMotion.isClosing) {
-    // Lid is open at rest: clear canvas to transparent so Windows desktop is active underneath
+    // Lid is open at rest: clear canvas and hide overlay so Windows desktop apps are active underneath
     if (isOverlayDrawn) {
-      gl.viewport(0, 0, canvas.width, canvas.height);
-      gl.clearColor(0.0, 0.0, 0.0, 0.0);
-      gl.clear(gl.COLOR_BUFFER_BIT);
+      clearCanvas();
       isOverlayDrawn = false;
+      ipcRenderer.send('hide-overlay');
     }
     if (animationFrameId) {
       cancelAnimationFrame(animationFrameId);
@@ -237,6 +246,9 @@ function renderFold(timestamp) {
     return;
   }
 
+  if (!isOverlayDrawn) {
+    ipcRenderer.send('show-overlay');
+  }
   isOverlayDrawn = true;
 
   // Smooth cubic opacity blend for first 2.5% of closure
