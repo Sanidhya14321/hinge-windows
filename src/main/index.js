@@ -297,29 +297,29 @@ function setupGlobalShortcuts() {
   });
 }
 
-// Power and Display monitoring
-powerMonitor.on('suspend', () => {
-  if (isActive) {
-    stopCapture();
-  }
-  sensorManager.stop();
-});
-
-powerMonitor.on('resume', async () => {
-  await sensorManager.init();
-  sensorManager.start();
-  broadcastState();
-});
-
-screen.on('display-metrics-changed', () => {
-  if (overlayWindow && !overlayWindow.isDestroyed()) {
-    const primaryDisplay = screen.getPrimaryDisplay();
-    overlayWindow.setBounds(primaryDisplay.bounds);
-  }
-});
-
 // App Lifecycle
 app.whenReady().then(async () => {
+  // Power and Display monitoring
+  powerMonitor.on('suspend', () => {
+    if (isActive) {
+      stopCapture();
+    }
+    sensorManager.stop();
+  });
+
+  powerMonitor.on('resume', async () => {
+    await sensorManager.init();
+    sensorManager.start();
+    broadcastState();
+  });
+
+  screen.on('display-metrics-changed', () => {
+    if (overlayWindow && !overlayWindow.isDestroyed()) {
+      const primaryDisplay = screen.getPrimaryDisplay();
+      overlayWindow.setBounds(primaryDisplay.bounds);
+    }
+  });
+
   // Initialize Motion with saved open angle
   lidMotion = new LidMotion(config.openAngle || 100);
 
