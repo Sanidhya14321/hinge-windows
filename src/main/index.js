@@ -41,8 +41,9 @@ let isActive = false;
 let isStarting = false;
 let currentError = null;
 let motionLoopInterval = null;
+let overlayIsReady = false;
 
-function broadcastState() {
+function broadcastState(updateTray = false) {
   const state = {
     isActive,
     isStarting,
@@ -56,11 +57,13 @@ function broadcastState() {
   if (settingsWindow && !settingsWindow.isDestroyed()) {
     settingsWindow.webContents.send('state-update', state);
   }
-  updateTrayMenu();
+  if (updateTray) {
+    updateTrayMenu();
+  }
 }
 
 function createSettingsWindow() {
-  if (settingsWindow) {
+  if (settingsWindow && !settingsWindow.isDestroyed()) {
     settingsWindow.show();
     settingsWindow.focus();
     return;
@@ -84,7 +87,7 @@ function createSettingsWindow() {
 
   settingsWindow.once('ready-to-show', () => {
     settingsWindow.show();
-    broadcastState();
+    broadcastState(true);
   });
 
   settingsWindow.on('close', (event) => {
@@ -123,50 +126,61 @@ function createOverlayWindow() {
     }
   });
 
-  // Ensure click-through overlay so clicks pass directly to desktop apps below
-  overlayWindow.setIgnoreMouseEvents(true, { forward: true });
+  // Pure OS-level click-through on Windows (WS_EX_TRANSPARENT)
+  overlayWindow.setIgnoreMouseEvents(true);
   overlayWindow.setAlwaysOnTop(true, 'screen-saver');
 
   overlayWindow.loadFile(path.join(__dirname, '../renderer/overlay.html'));
 
   overlayWindow.once('ready-to-show', () => {
-    overlayWindow.show();
+    overlayWindow.showInactive();
   });
+}
+
+async function sendCaptureSourceToOverlay() {
+  try {
+    const sources = await desktopCapturer.getSources({ types: ['screen'] });
+    const primarySource = sources.find(s => s.id.startsWith('screen:') || s.name === 'Entire screen') || sources[0];
+
+    if (!primarySource) {
+      throw new Error('No desktop screen found.');
+    }
+
+    if (overlayWindow && !overlayWindow.isDestroyed()) {
+      overlayWindow.webContents.send('init-capture', {
+        sourceId: primarySource.id
+      });
+    }
+  } catch (err) {
+    console.error('Failed to get screen sources:', err.message);
+  }
 }
 
 async function startCapture() {
   if (isActive || isStarting) return;
   isStarting = true;
   currentError = null;
-  broadcastState();
+  broadcastState(true);
 
   try {
     createOverlayWindow();
 
-    // Query screen sources
-    const sources = await desktopCapturer.getSources({ types: ['screen'] });
-    const primarySource = sources[0];
-
-    if (!primarySource) {
-      throw new Error('No screen found for desktop capture.');
+    if (overlayIsReady) {
+      await sendCaptureSourceToOverlay();
     }
-
-    overlayWindow.webContents.send('init-capture', {
-      sourceId: primarySource.id
-    });
 
     lidMotion.setEnabled(true);
     startMotionLoop();
 
     isActive = true;
     isStarting = false;
-    broadcastState();
+    broadcastState(true);
   } catch (err) {
     isActive = false;
     isStarting = false;
     currentError = err.message || 'Failed to start screen capture.';
     stopCapture();
-    broadcastState();
+    broadcastState(true);
   }
 }
 
@@ -178,9 +192,8 @@ function stopCapture() {
 
   if (overlayWindow && !overlayWindow.isDestroyed()) {
     overlayWindow.webContents.send('stop-capture');
-    overlayWindow.hide();
   }
-  broadcastState();
+  broadcastState(true);
 }
 
 function startMotionLoop() {
@@ -272,27 +285,26 @@ function calibrateOpenPosition() {
   } else {
     currentError = 'Open lid to your comfortable viewing position first.';
   }
-  broadcastState();
+  broadcastState(true);
 }
 
 function runDemoFold() {
   if (!isActive) {
-    startCapture().then(() => {
-      setTimeout(() => {
-        sensorManager.startDemoFold(lidMotion.openAngle);
-      }, 500);
-    });
-  } else {
-    sensorManager.startDemoFold(lidMotion.openAngle);
+    startCapture();
   }
+  setTimeout(() => {
+    sensorManager.startDemoFold(lidMotion.openAngle);
+  }, 350);
 }
 
 function setupGlobalShortcuts() {
   // Hotkeys to fold/unfold virtual lid: Ctrl+Shift+[ and Ctrl+Shift+]
   globalShortcut.register('CommandOrControl+Shift+[', () => {
+    if (!isActive) startCapture();
     sensorManager.adjustVirtualAngle(-5);
   });
   globalShortcut.register('CommandOrControl+Shift+]', () => {
+    if (!isActive) startCapture();
     sensorManager.adjustVirtualAngle(+5);
   });
 }
@@ -310,7 +322,7 @@ app.whenReady().then(async () => {
   powerMonitor.on('resume', async () => {
     await sensorManager.init();
     sensorManager.start();
-    broadcastState();
+    broadcastState(true);
   });
 
   screen.on('display-metrics-changed', () => {
@@ -326,8 +338,9 @@ app.whenReady().then(async () => {
   // Initialize Sensor Manager
   sensorManager = new SensorManager();
   sensorManager.on('angle', (angle) => {
-    const update = lidMotion.receive(angle);
-    broadcastState();
+    lidMotion.receive(angle);
+    // Broadcast state without rebuilding tray every frame
+    broadcastState(false);
   });
 
   await sensorManager.init();
@@ -348,13 +361,13 @@ app.whenReady().then(async () => {
   if (config.autoStart) {
     setTimeout(() => {
       startCapture();
-    }, 800);
+    }, 500);
   }
 });
 
 // IPC Handlers
-ipcMain.on('get-state', (event) => {
-  broadcastState();
+ipcMain.on('get-state', () => {
+  broadcastState(false);
 });
 
 ipcMain.on('toggle-active', (event, enabled) => {
@@ -370,6 +383,9 @@ ipcMain.on('calibrate-angle', () => {
 });
 
 ipcMain.on('set-virtual-angle', (event, angle) => {
+  if (!isActive) {
+    startCapture();
+  }
   sensorManager.setVirtualAngle(angle);
 });
 
@@ -383,14 +399,21 @@ ipcMain.on('close-settings', () => {
   }
 });
 
+ipcMain.on('overlay-dom-ready', () => {
+  overlayIsReady = true;
+  if (isActive || isStarting) {
+    sendCaptureSourceToOverlay();
+  }
+});
+
 ipcMain.on('overlay-ready', () => {
   currentError = null;
-  broadcastState();
+  broadcastState(false);
 });
 
 ipcMain.on('overlay-error', (event, message) => {
   currentError = message;
-  broadcastState();
+  broadcastState(false);
 });
 
 app.on('second-instance', () => {
